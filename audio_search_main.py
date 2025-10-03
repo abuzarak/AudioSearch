@@ -704,8 +704,8 @@ def get_distribution_of_genres(mp3_filepaths_to_test):
 
 
 def connect_to_database_and_insert_mp3s_fingerprints_into_database(audio_prints_db, mp3_filepaths):
-    sys.stdout = open("logs\\insert_" + str(os.getpid()) + ".log", "a")
-    sys.stderr = open("logs\\insert_" + str(os.getpid()) + "_err.log", "a")
+    sys.stdout = open("logs/insert_" + str(os.getpid()) + ".log", "a")
+    sys.stderr = open("logs/insert_" + str(os.getpid()) + "_err.log", "a")
     audio_search = AudioSearch(audio_prints_db=audio_prints_db())
     sys.stdout.flush()
     audio_search.insert_mp3s_fingerprints_into_database(mp3_filepaths, skip_existing_songs=True)

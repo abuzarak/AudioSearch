@@ -193,12 +193,10 @@ async def predict(file: UploadFile = File(...)):
         
         print(f"top_bin: {dbg['top_bin']}")
         print(f"unique_offsets: {dbg['unique_offsets']}")
-        if dbg['top_bin'] > 10:
-            return JSONResponse(content={"match": True, "reason": "top_bin>10", "metrics": dbg})
-            print(True)
-        if dbg['top_bin'] < 10:
-            return JSONResponse(content={"match": False, "reason": "top_bin<10", "metrics": dbg})
-            print(False)
+        if dbg['top_bin'] >= 10:
+            return JSONResponse(content={"match": True, "reason": "top_bin>=10", "metrics": dbg})
+        if dbg['top_bin'] <= 10:
+            return JSONResponse(content={"match": False, "reason": "top_bin<=10", "metrics": dbg})
         if winner is None:
             return JSONResponse(content={"match": False, "reason": "low_confidence", "metrics": dbg})
 
@@ -237,11 +235,11 @@ def process_file(file_path: str):
 
         winner, dbg = pick_winner_with_confidence(df_matches, len(fingerprints))
 
-        if dbg['top_bin'] > 10:
-            return JSONResponse(content={"match": True, "reason": "top_bin>10", "metrics": dbg})
+        if dbg['top_bin'] >= 10:
+            return JSONResponse(content={"match": True, "reason": "top_bin>=10", "metrics": dbg})
             print(True)
-        if dbg['top_bin'] < 10:
-            return JSONResponse(content={"match": False, "reason": "top_bin<10", "metrics": dbg})
+        if dbg['top_bin'] <= 10:
+            return JSONResponse(content={"match": False, "reason": "top_bin<=10", "metrics": dbg})
             print(False)
 
         if winner is None:
