@@ -21,7 +21,7 @@ from mutagen.id3 import ID3NoHeaderError
 from audio_search_dbs import DuplicateKeyError
 # TODO conditional imports
 from mongo_audio_print_db import MongoAudioPrintDB
-from ram_audio_print_db import RamAudioPrintDB
+# from ram_audio_print_db import RamAudioPrintDB
 
 from audio_search_plotting import plot_recognition_rate, plot_spectrogram_and_peak_subplots_detailed, \
     start_hist_subplots, \
@@ -367,24 +367,36 @@ class AudioSearch:
                                              noverlap=noverlap)
         return Sxx, f, t
 
-    def find_spectrogram_peaks(self, Sxx, t_step, f_size_hz=500, t_size_sec=2):
-        # print('find_spectrogram_peaks')
-        max_f = 4000
+    def find_spectrogram_peaks(self, Sxx, t_step, f_size_hz=100, t_size_sec=.8):
+        """
+        Telephony-optimized peak detection.
+        Finds local maxima in the spectrogram with smaller neighborhoods
+        so more peaks are detected from narrowband 8kHz audio.
+        """
+        max_f = 4000  # Nyquist for 8kHz audio
         f_bins = Sxx.shape[0]
         f_per_bin = max_f / f_bins
+
+        # Smaller frequency window (100 Hz instead of 500 Hz)
         f_size = int(np.round(f_size_hz / f_per_bin))
+        # Smaller time window (0.5s instead of 2s)
         t_size = int(np.round(t_size_sec / t_step))
 
-        max_filter = scipy.ndimage.filters.maximum_filter(Sxx, size=(f_size, t_size), mode='constant')
-        peak_locations = np.argwhere((Sxx == max_filter) & (Sxx != 0))
+        # Local max filter
+        max_filter = scipy.ndimage.maximum_filter(Sxx, size=(f_size, t_size), mode='constant')
+
+        # A peak is where Sxx equals the local max and is not zero
+        peak_locations = np.argwhere((Sxx == max_filter) & (Sxx > 0))
+
         return peak_locations, max_filter, (t_size, f_size)
+
 
     def get_fingerprints_from_peaks(self, f_max, f_step, peak_locations, t_max, t_step):
         # print("get_fingerprints_from_peaks")
         n_peaks = len(peak_locations)
         print("n_peaks=", n_peaks)
         # 1400hz tall zone box
-        zone_f_size = 1400 // f_step
+        zone_f_size = 2400 // f_step
         # 6 second wide zone box
         zone_t_size = 6 // t_step
         # start one spectrogram time segment after the current one
@@ -481,12 +493,21 @@ class AudioSearch:
                                                              peak_locations_f,
                                                              zone_freq_end, zone_freq_start,
                                                              zone_time_end, zone_time_start):
-        start = peak_locations_t.searchsorted(zone_time_start, side='left')[0]
-        end = peak_locations_t.searchsorted(zone_time_end, side='right')[0]
+        start = peak_locations_t.searchsorted(zone_time_start, side='left')
+        if isinstance(start, (np.ndarray, list)):
+            start = start[0]
+        end = peak_locations_t.searchsorted(zone_time_end, side='right')
+        if isinstance(end, (np.ndarray, list)):
+            end = end[0]
         t_index = peak_locations_t.index[start:end]
 
-        f_start = peak_locations_f.searchsorted(zone_freq_start, side='left')[0]
-        f_end = peak_locations_f.searchsorted(zone_freq_end, side='right')[0]
+        f_start = peak_locations_f.searchsorted(zone_freq_start, side='left')
+        if isinstance(f_start, (np.ndarray, list)):
+            f_start = f_start[0]
+        f_end = peak_locations_f.searchsorted(zone_freq_end, side='right')
+        if isinstance(f_end, (np.ndarray, list)):
+            f_end = f_end[0]
+
         f_index = peak_locations_f.index[f_start:f_end]
 
         paired_df_peak_locations = df_peak_locations.loc[t_index & f_index]
@@ -499,13 +520,28 @@ class AudioSearch:
                                                                peak_locations_f,
                                                                zone_freq_end, zone_freq_start,
                                                                zone_time_end, zone_time_start):
-        start = peak_locations_t.searchsorted(zone_time_start, side='left')[0]
-        end = peak_locations_t.searchsorted(zone_time_end, side='right')[0]
+        start = peak_locations_t.searchsorted(zone_time_start, side='left')
+        if isinstance(start, (np.ndarray, list)):
+            start = start[0]
+        end = peak_locations_t.searchsorted(zone_time_end, side='right')
+        if isinstance(end, (np.ndarray, list)):
+            end = end[0]
         t_index = peak_locations_t.index[start:end]
 
-        f_start = peak_locations_f.searchsorted(zone_freq_start, side='left')[0]
-        f_end = peak_locations_f.searchsorted(zone_freq_end, side='right')[0]
-        f_index = peak_locations_f.index[f_start:f_end]
+        f_start = peak_locations_f.searchsorted(zone_freq_start, side='left')
+        if isinstance(f_start, (np.ndarray, list)):
+            f_start = f_start[0]
+        f_end = peak_locations_f.searchsorted(zone_freq_end, side='right')
+        if isinstance(f_end, (np.ndarray, list)):
+            f_end = f_end[0]
+
+        # f_index = peak_locations_f.index[f_start:f_end]
+        t_index = (peak_locations_t >= zone_time_start) & (peak_locations_t <= zone_time_end)
+        f_index = (peak_locations_f >= zone_freq_start) & (peak_locations_f <= zone_freq_end)
+
+        # align both masks with df_peak_locations
+        t_index = pd.Series(t_index, index=df_peak_locations.index)
+        f_index = pd.Series(f_index, index=df_peak_locations.index)
 
         paired_df_peak_locations = df_peak_locations.loc[t_index & f_index]
 
@@ -638,14 +674,14 @@ def load_audio_data_into_queue(audio_queue, usable_mp3s):
 
 def get_test_set_and_test(audio_search, root_directory):
     # test_list_json_read_path = None
-    test_list_json_read_path = 'song_test_sets\\test_mp3_paths_.json'
+    test_list_json_read_path = root_directory
     if test_list_json_read_path is not None:
         with open(test_list_json_read_path, 'r')as json_fp:
             mp3_filepaths_to_test = json.load(json_fp)
     else:
         test_size = 3
         mp3_filepaths_to_test = get_n_random_mp3s_to_test(audio_search, root_directory, test_size)
-        test_list_json_write_path = 'song_test_sets\\test_mp3_paths_.json'
+        test_list_json_write_path = root_directory
         with open(test_list_json_write_path, 'w')as json_fp:
             json.dump(mp3_filepaths_to_test, json_fp)
 
