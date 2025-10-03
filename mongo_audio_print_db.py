@@ -31,7 +31,7 @@ class MongoAudioPrintDB(AudioPrintsDB):
         return self.songs_collection.find_one(song)
 
     def get_next_song_id(self):
-        most_recent_song = self.songs_collection.find_one({}, sort=[(u"_id", -1)])
+        most_recent_song = self.songs_collection.find_one({"_id": {"$type": "int"}}, sort=[(u"_id", -1)])
         if most_recent_song is not None:
             new_id = most_recent_song['_id'] + 1
         else:

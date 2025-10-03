@@ -2,6 +2,7 @@ import os
 import tempfile
 import zipfile
 import math
+import shutil
 import numpy as np
 import pandas as pd
 from fastapi import FastAPI, File, UploadFile
@@ -159,7 +160,6 @@ def pick_winner_with_confidence(df_matches, n_fingerprints, fingerprints=None):
 
     return (top_sid if passes else None), dbg
 
-
 def convert_to_mp3_8k(input_path: str, output_path: str):
     """Convert any audio file to mono MP3 at 8kHz."""
     audio = AudioSegment.from_file(input_path)
@@ -313,8 +313,15 @@ async def insert(file: UploadFile = File(...)):
         }
 
         # Insert into DB
-        song_id = db.insert_song(song_doc)
-        db.insert_fingerprints(fingerprints, song_id)
+        song_id = db.get_next_song_id()
+        song_doc["_id"] = song_id
+        db.insert_one_song(song_doc)
+
+        # attach songID to each fingerprint
+        for fp in fingerprints:
+            fp["songID"] = song_id
+
+        db.insert_many_fingerprints(fingerprints)
 
         return JSONResponse(content={
             "inserted": True,
@@ -332,3 +339,92 @@ async def insert(file: UploadFile = File(...)):
             os.remove(tmp_mp3)
         except:
             pass
+
+@app.post("/batch_insert")
+async def batch_insert(file: UploadFile = File(...)):
+    """
+    Batch insert multiple audio files from a ZIP archive into the honeypot DB.
+    Each file will be converted, fingerprinted, and stored in MongoDB.
+    """
+    results = []
+
+    # Create temp working directory
+    tmp_dir = tempfile.mkdtemp()
+
+    try:
+        # Save uploaded ZIP
+        zip_path = os.path.join(tmp_dir, file.filename)
+        with open(zip_path, "wb") as f:
+            f.write(await file.read())
+
+        # Extract ZIP
+        extract_dir = os.path.join(tmp_dir, "unzipped")
+        with zipfile.ZipFile(zip_path, "r") as zip_ref:
+            zip_ref.extractall(extract_dir)
+
+        # Loop through extracted files
+        for root, _, files in os.walk(extract_dir):
+            for filename in files:
+                # Skip hidden or metadata files
+                if filename.startswith(".") or "__MACOSX" in root:
+                    continue
+
+                try:
+                    file_path = os.path.join(root, filename)
+
+                    # Convert file to 8kHz mono MP3
+                    tmp_mp3 = file_path + ".mp3"
+                    convert_to_mp3_8k(file_path, tmp_mp3)
+
+                    # Load audio and create fingerprints
+                    data, rate = load_audio_data(tmp_mp3)
+                    fingerprints = search.get_fingerprints_from_audio(data, rate)
+
+                    if not fingerprints:
+                        results.append({
+                            "file": filename,
+                            "inserted": False,
+                            "reason": "no_fingerprints"
+                        })
+                        continue
+
+                    # Metadata
+                    song_doc = {
+                        "artist": "Telecom Security",
+                        "album": "Honeypot DB",
+                        "title": os.path.splitext(filename)[0],
+                        "track_length_s": len(data) / rate
+                    }
+
+                    # Insert song and fingerprints
+                    song_id = db.get_next_song_id()
+                    song_doc["_id"] = song_id
+                    db.insert_one_song(song_doc)
+
+                    for fp in fingerprints:
+                        fp["songID"] = song_id
+
+                    db.insert_many_fingerprints(fingerprints)
+
+                    results.append({
+                        "file": filename,
+                        "inserted": True,
+                        "song_id": song_id,
+                        "n_fingerprints": len(fingerprints)
+                    })
+
+                except Exception as e:
+                    results.append({
+                        "file": filename,
+                        "inserted": False,
+                        "error": str(e)
+                    })
+
+        return JSONResponse(content={"results": results})
+
+    except Exception as e:
+        return JSONResponse(content={"error": str(e)}, status_code=500)
+
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
